@@ -1,151 +1,74 @@
 import streamlit as st
 import pandas as pd
-import math
-from pathlib import Path
+import os
+from datetime import datetime
 
-# Set the title and favicon that appear in the Browser's tab bar.
-st.set_page_config(
-    page_title='GDP dashboard',
-    page_icon=':earth_americas:', # This is an emoji shortcode. Could be a URL too.
-)
+# 기본 설정
+st.set_page_config(page_title="설 선물 신청", layout="wide")
 
-# -----------------------------------------------------------------------------
-# Declare some useful functions.
+# 업로드된 데이터 저장
+uploaded_file = st.file_uploader("엑셀 파일을 업로드하세요", type=["xlsx"])
 
-@st.cache_data
-def get_gdp_data():
-    """Grab GDP data from a CSV file.
+# 초기화
+if "requests" not in st.session_state:
+    st.session_state["requests"] = []
 
-    This uses caching to avoid having to read the file every time. If we were
-    reading from an HTTP endpoint instead of a file, it's a good idea to set
-    a maximum age to the cache with the TTL argument: @st.cache_data(ttl='1d')
-    """
+# 상품 정보 및 신청 화면
+if uploaded_file:
+    df = pd.read_excel(uploaded_file)
 
-    # Instead of a CSV on disk, you could read from an HTTP endpoint here too.
-    DATA_FILENAME = Path(__file__).parent/'data/gdp_data.csv'
-    raw_gdp_df = pd.read_csv(DATA_FILENAME)
+    st.header("설 선물 리스트")
+    st.markdown("아래에서 선물을 선택해 신청하세요.")
 
-    MIN_YEAR = 1960
-    MAX_YEAR = 2022
+    for i, row in df.iterrows():
+        # 사진, 상품명, 상세설명 표시
+        st.image(row["사진"], caption=row["상품명"], width=200)
+        st.markdown(f"**상품명:** {row['상품명']}")
+        st.markdown(f"[상세보기 링크](https://{row['상세설명']})")
 
-    # The data above has columns like:
-    # - Country Name
-    # - Country Code
-    # - [Stuff I don't care about]
-    # - GDP for 1960
-    # - GDP for 1961
-    # - GDP for 1962
-    # - ...
-    # - GDP for 2022
-    #
-    # ...but I want this instead:
-    # - Country Name
-    # - Country Code
-    # - Year
-    # - GDP
-    #
-    # So let's pivot all those year-columns into two: Year and GDP
-    gdp_df = raw_gdp_df.melt(
-        ['Country Code'],
-        [str(x) for x in range(MIN_YEAR, MAX_YEAR + 1)],
-        'Year',
-        'GDP',
-    )
+        # 신청 버튼
+        if st.button(f"신청 - {row['상품명']}"):
+            with st.form(f"form_{i}"):
+                st.write(f"**{row['상품명']} 신청하기**")
+                affiliation = st.text_input("소속")
+                name = st.text_input("이름")
+                address = st.text_input("배송지")
+                contact = st.text_input("연락처")
+                submit = st.form_submit_button("신청")
+                cancel = st.form_submit_button("취소")
 
-    # Convert years from string to integers
-    gdp_df['Year'] = pd.to_numeric(gdp_df['Year'])
+                if submit:
+                    st.session_state["requests"].append({
+                        "순번": i + 1,
+                        "상품명": row["상품명"],
+                        "소속": affiliation,
+                        "이름": name,
+                        "배송지": address,
+                        "연락처": contact,
+                        "신청일자": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    })
+                    st.success("신청이 완료되었습니다. 신청기한 내 변경을 희망하시면 담당자 이메일로 번호 및 상품명을 보내주세요.")
+                elif cancel:
+                    st.info("신청이 취소되었습니다.")
 
-    return gdp_df
+# 관리자 화면
+st.sidebar.title("관리자 메뉴")
+if st.sidebar.checkbox("신청 내역 보기"):
+    st.sidebar.markdown("### 신청 내역")
+    if st.session_state["requests"]:
+        request_df = pd.DataFrame(st.session_state["requests"])
+        st.sidebar.dataframe(request_df)
 
-gdp_df = get_gdp_data()
+        # 엑셀 다운로드
+        @st.cache
+        def convert_to_excel(dataframe):
+            return dataframe.to_excel(index=False, engine="openpyxl")
 
-# -----------------------------------------------------------------------------
-# Draw the actual page
-
-# Set the title that appears at the top of the page.
-'''
-# :earth_americas: GDP dashboard
-
-Browse GDP data from the [World Bank Open Data](https://data.worldbank.org/) website. As you'll
-notice, the data only goes to 2022 right now, and datapoints for certain years are often missing.
-But it's otherwise a great (and did I mention _free_?) source of data.
-'''
-
-# Add some spacing
-''
-''
-
-min_value = gdp_df['Year'].min()
-max_value = gdp_df['Year'].max()
-
-from_year, to_year = st.slider(
-    'Which years are you interested in?',
-    min_value=min_value,
-    max_value=max_value,
-    value=[min_value, max_value])
-
-countries = gdp_df['Country Code'].unique()
-
-if not len(countries):
-    st.warning("Select at least one country")
-
-selected_countries = st.multiselect(
-    'Which countries would you like to view?',
-    countries,
-    ['DEU', 'FRA', 'GBR', 'BRA', 'MEX', 'JPN'])
-
-''
-''
-''
-
-# Filter the data
-filtered_gdp_df = gdp_df[
-    (gdp_df['Country Code'].isin(selected_countries))
-    & (gdp_df['Year'] <= to_year)
-    & (from_year <= gdp_df['Year'])
-]
-
-st.header('GDP over time', divider='gray')
-
-''
-
-st.line_chart(
-    filtered_gdp_df,
-    x='Year',
-    y='GDP',
-    color='Country Code',
-)
-
-''
-''
-
-
-first_year = gdp_df[gdp_df['Year'] == from_year]
-last_year = gdp_df[gdp_df['Year'] == to_year]
-
-st.header(f'GDP in {to_year}', divider='gray')
-
-''
-
-cols = st.columns(4)
-
-for i, country in enumerate(selected_countries):
-    col = cols[i % len(cols)]
-
-    with col:
-        first_gdp = first_year[first_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-        last_gdp = last_year[last_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-
-        if math.isnan(first_gdp):
-            growth = 'n/a'
-            delta_color = 'off'
-        else:
-            growth = f'{last_gdp / first_gdp:,.2f}x'
-            delta_color = 'normal'
-
-        st.metric(
-            label=f'{country} GDP',
-            value=f'{last_gdp:,.0f}B',
-            delta=growth,
-            delta_color=delta_color
+        st.sidebar.download_button(
+            label="신청 내역 엑셀 다운로드",
+            data=convert_to_excel(request_df),
+            file_name="신청내역.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+    else:
+        st.sidebar.write("신청 내역이 없습니다.")
